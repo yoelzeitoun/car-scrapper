@@ -1,0 +1,17 @@
+{
+  "searches": [
+    {
+      "name": "rav4-hybrid",
+      "url": "https://www.facebook.com/marketplace/jerusalem/search?query=rav4%20toyota%20hybrid",
+      "filters": {
+        "title_must_contain": []
+      }
+    }
+  ],
+  "scraper_settings": {
+    "headless": false,
+    "browser": "chromium",
+    "max_scroll": 10,
+    "delay_between_requests": 2
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "searches": [
+        {
+      "name": "toyota-rav4-hybrid",
+      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=19&model=10238&year=2016-2021&price=20000--1&km=40000-140000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["טויוטה"]
+      }
+    },
+            {
+      "name": "skoda-octavia",
+      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=40&model=10547&year=2022-2025&price=20000--1&km=-1-90000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["סקודה"]
+      }
+    },
+            {
+      "name": "byd-hybrid",
+      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=141&model=13329&price=20000--1&km=-1-40000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["בי.ווי.די"]
+      }
+    },
+    {
+      "name": "hyundai-kona-hybrid",
+      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=21&model=10283&year=2023-2025&price=20000--1&km=-1-15000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["יונדאי"]
+      }
+    },    
+    {
+      "name": "jaecoo-hybrid",
+      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=355&model=13395&year=2024-2025&price=20000--1&km=-1-130000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["ג'אקו"]
+      }
+    },
+    {
+      "name": "hyundai-bayun-hybrid",
+      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=21&model=11234&price=20000--1&km=10000-80000&priceOnly=1",
+      "filters": {
+        "title_must_contain": ["יונדאי"]
+      }
+    }
+  ],
+  "scraper_settings": {
+    "headless": false,
+    "browser": "chromium",
+    "max_pages": 10,
+    "delay_between_requests": 1.5
+  }
+}
