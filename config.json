@@ -11,12 +11,12 @@
     },
     {
       "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=21&model=10283&year=2023-2025&price=20000--1&km=-1-15000&priceOnly=1"
-    },    
+    },
     {
       "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=355&model=13395&year=2024-2025&price=20000--1&km=-1-130000&priceOnly=1"
     },
     {
-      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=21&model=11234&price=20000--1&km=10000-80000&priceOnly=1"
+      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=2&model=10038&year=2020-2024&km=10000-100000&priceOnly=1"
     }
   ],
   "scraper_settings": {
