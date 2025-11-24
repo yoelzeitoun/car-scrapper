@@ -11,7 +11,7 @@ and tracks changes over time.
 import argparse
 import json
 import time
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 from playwright.sync_api import sync_playwright
 import re
 from datetime import datetime
@@ -38,6 +38,111 @@ def load_config(config_path):
     """Load configuration from JSON file."""
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def load_yad2_mapping():
+    """Load the Yad2 manufacturer/model mapping data."""
+    try:
+        with open('yad2_mapping.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print("Warning: yad2_mapping.json not found. Names and filters will not be auto-generated.")
+        return None
+
+
+def extract_url_params(url):
+    """Extract manufacturer and model IDs from a Yad2 URL.
+    
+    Returns:
+        tuple: (manufacturer_id, model_id) or (None, None) if not found
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    
+    manufacturer_id = params.get('manufacturer', [None])[0]
+    model_id = params.get('model', [None])[0]
+    
+    return manufacturer_id, model_id
+
+
+def lookup_vehicle_info(manufacturer_id, model_id, mapping_data):
+    """Look up manufacturer and model names from the mapping data.
+    
+    Returns:
+        dict: {
+            'manufacturer_en': str,
+            'manufacturer_he': str,
+            'model_en': str or None,
+            'model_he': str or None
+        }
+    """
+    if not mapping_data or not manufacturer_id:
+        return None
+    
+    manufacturers = mapping_data.get('manufacturers', {})
+    manufacturer_info = manufacturers.get(manufacturer_id)
+    
+    if not manufacturer_info:
+        return None
+    
+    result = {
+        'manufacturer_en': manufacturer_info.get('name_en', ''),
+        'manufacturer_he': manufacturer_info.get('name_he', ''),
+        'model_en': None,
+        'model_he': None
+    }
+    
+    # If model_id is provided, look it up
+    if model_id:
+        models = manufacturer_info.get('models', {})
+        model_info = models.get(model_id)
+        if model_info:
+            result['model_en'] = model_info.get('name_en', '')
+            result['model_he'] = model_info.get('name_he', '')
+    
+    return result
+
+
+def enrich_search_config(search_config, mapping_data):
+    """Enrich a search configuration with auto-generated name and filters.
+    
+    If 'name' or 'title_must_contain' are not present, they will be generated
+    from the URL using the mapping data.
+    """
+    # If already has name and filters, return as-is
+    if 'name' in search_config and search_config.get('filters', {}).get('title_must_contain'):
+        return search_config
+    
+    url = search_config.get('url')
+    if not url or not mapping_data:
+        return search_config
+    
+    # Extract IDs from URL
+    manufacturer_id, model_id = extract_url_params(url)
+    
+    # Lookup vehicle info
+    vehicle_info = lookup_vehicle_info(manufacturer_id, model_id, mapping_data)
+    
+    if not vehicle_info:
+        return search_config
+    
+    # Generate name if not present
+    if 'name' not in search_config:
+        manufacturer_en = vehicle_info['manufacturer_en'].lower().replace(' ', '-')
+        if vehicle_info['model_en']:
+            model_en = vehicle_info['model_en'].lower().replace(' ', '-')
+            search_config['name'] = f"{manufacturer_en}_{model_en}"
+        else:
+            search_config['name'] = manufacturer_en
+    
+    # Generate title_must_contain if not present
+    if 'filters' not in search_config:
+        search_config['filters'] = {}
+    
+    if 'title_must_contain' not in search_config['filters']:
+        search_config['filters']['title_must_contain'] = [vehicle_info['manufacturer_he']]
+    
+    return search_config
 
 
 def load_previous_results(output_file):
@@ -428,8 +533,12 @@ def main():
     # Load configuration
     config = load_config(args.config)
     
-    # Get searches to run
+    # Load Yad2 mapping data
+    mapping_data = load_yad2_mapping()
+    
+    # Get searches and enrich them with auto-generated names and filters
     searches = config['searches']
+    searches = [enrich_search_config(search, mapping_data) for search in searches]
     
     # If no specific search provided, show interactive menu
     if not args.search:
