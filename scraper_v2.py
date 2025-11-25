@@ -20,6 +20,7 @@ import hashlib
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, parse_qs
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from difflib import SequenceMatcher
 
 # --- Helper Functions (Ported from scraper.py) ---
 
@@ -102,6 +103,264 @@ def enrich_search_config(search_config, mapping_data):
         search_config['filters'] = {}
     if 'title_must_contain' not in search_config['filters']:
         search_config['filters']['title_must_contain'] = [vehicle_info['manufacturer_he']]
+    return search_config
+
+def find_closest_matches(query, options_dict, top_n=5):
+    """Find closest matches using fuzzy string matching.
+    
+    Args:
+        query: Search query string
+        options_dict: Dict where keys are IDs and values contain 'name_en' and 'name_he'
+        top_n: Number of top matches to return
+    
+    Returns:
+        List of tuples (id, name_en, name_he, similarity_score)
+    """
+    matches = []
+    query_lower = query.lower().strip()
+    
+    for id_key, info in options_dict.items():
+        name_en = info.get('name_en', '').lower()
+        name_he = info.get('name_he', '')
+        
+        # Calculate similarity with English name
+        similarity = SequenceMatcher(None, query_lower, name_en).ratio()
+        matches.append((id_key, info.get('name_en', ''), name_he, similarity))
+    
+    # Sort by similarity score (descending)
+    matches.sort(key=lambda x: x[3], reverse=True)
+    return matches[:top_n]
+
+def select_manufacturer_interactive(mapping_data):
+    """Interactive manufacturer selection with fuzzy matching.
+    
+    Returns:
+        Tuple of (manufacturer_id, manufacturer_name_en, manufacturer_name_he) or None
+    """
+    if not mapping_data:
+        print("Error: yad2_mapping.json not loaded.")
+        return None
+    
+    manufacturers = mapping_data.get('manufacturers', {})
+    if not manufacturers:
+        print("Error: No manufacturers found in mapping data.")
+        return None
+    
+    print("\n" + "="*60)
+    print("MANUFACTURER SELECTION")
+    print("="*60)
+    
+    manufacturer_input = input("Enter manufacturer name (e.g., Hyundai): ").strip()
+    if not manufacturer_input:
+        print("No manufacturer entered.")
+        return None
+    
+    # Try exact match first (case-insensitive)
+    manufacturer_input_lower = manufacturer_input.lower()
+    exact_match = None
+    for mfr_id, mfr_info in manufacturers.items():
+        if (mfr_info.get('name_en', '').lower() == manufacturer_input_lower or 
+            mfr_info.get('name_he', '') == manufacturer_input):
+            exact_match = (mfr_id, mfr_info.get('name_en'), mfr_info.get('name_he'))
+            break
+    
+    if exact_match:
+        print(f"✓ Found exact match: {exact_match[1]} ({exact_match[2]})")
+        return exact_match
+    
+    # No exact match, show closest matches
+    print(f"\nNo exact match found for '{manufacturer_input}'. Here are the closest matches:")
+    closest = find_closest_matches(manufacturer_input, manufacturers, top_n=5)
+    
+    print("\n" + "-"*60)
+    for i, (mfr_id, name_en, name_he, score) in enumerate(closest, 1):
+        print(f"{i}. {name_en} ({name_he})")
+    print("-"*60)
+    
+    while True:
+        try:
+            choice = input(f"\nSelect a manufacturer (1-{len(closest)}) or 'c' to cancel: ").strip().lower()
+            if choice == 'c':
+                print("Cancelled.")
+                return None
+            
+            choice_num = int(choice)
+            if 1 <= choice_num <= len(closest):
+                selected = closest[choice_num - 1]
+                print(f"✓ Selected: {selected[1]} ({selected[2]})")
+                return (selected[0], selected[1], selected[2])
+            else:
+                print(f"Please enter a number between 1 and {len(closest)}.")
+        except ValueError:
+            print("Invalid input. Please enter a number or 'c'.")
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return None
+
+def select_model_interactive(manufacturer_id, manufacturer_name, mapping_data):
+    """Interactive model selection with fuzzy matching.
+    
+    Returns:
+        Tuple of (model_id, model_name_en, model_name_he) or None
+    """
+    if not mapping_data:
+        return None
+    
+    manufacturers = mapping_data.get('manufacturers', {})
+    manufacturer_info = manufacturers.get(manufacturer_id)
+    if not manufacturer_info:
+        print(f"Error: Manufacturer ID {manufacturer_id} not found.")
+        return None
+    
+    models = manufacturer_info.get('models', {})
+    if not models:
+        print(f"Error: No models found for {manufacturer_name}.")
+        return None
+    
+    print("\n" + "="*60)
+    print(f"MODEL SELECTION FOR {manufacturer_name.upper()}")
+    print("="*60)
+    
+    model_input = input("Enter model name (e.g., Kona): ").strip()
+    if not model_input:
+        print("No model entered.")
+        return None
+    
+    # Try exact match first (case-insensitive)
+    model_input_lower = model_input.lower()
+    exact_match = None
+    for model_id, model_info in models.items():
+        if (model_info.get('name_en', '').lower() == model_input_lower or 
+            model_info.get('name_he', '') == model_input):
+            exact_match = (model_id, model_info.get('name_en'), model_info.get('name_he'))
+            break
+    
+    if exact_match:
+        print(f"✓ Found exact match: {exact_match[1]} ({exact_match[2]})")
+        return exact_match
+    
+    # No exact match, show closest matches
+    print(f"\nNo exact match found for '{model_input}'. Here are the closest matches:")
+    closest = find_closest_matches(model_input, models, top_n=5)
+    
+    print("\n" + "-"*60)
+    for i, (model_id, name_en, name_he, score) in enumerate(closest, 1):
+        print(f"{i}. {name_en} ({name_he})")
+    print("-"*60)
+    
+    while True:
+        try:
+            choice = input(f"\nSelect a model (1-{len(closest)}) or 'c' to cancel: ").strip().lower()
+            if choice == 'c':
+                print("Cancelled.")
+                return None
+            
+            choice_num = int(choice)
+            if 1 <= choice_num <= len(closest):
+                selected = closest[choice_num - 1]
+                print(f"✓ Selected: {selected[1]} ({selected[2]})")
+                return (selected[0], selected[1], selected[2])
+            else:
+                print(f"Please enter a number between 1 and {len(closest)}.")
+        except ValueError:
+            print("Invalid input. Please enter a number or 'c'.")
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return None
+
+def interactive_search_mode(mapping_data):
+    """Interactive mode to build a search config from user inputs.
+    
+    Returns:
+        Search config dict or None
+    """
+    print("\n" + "#"*60)
+    print("#" + " "*58 + "#")
+    print("#" + "  INTERACTIVE CAR SEARCH MODE".center(58) + "#")
+    print("#" + " "*58 + "#")
+    print("#"*60)
+    
+    # Select manufacturer
+    manufacturer = select_manufacturer_interactive(mapping_data)
+    if not manufacturer:
+        return None
+    manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+    
+    # Select model
+    model = select_model_interactive(manufacturer_id, manufacturer_name_en, mapping_data)
+    if not model:
+        return None
+    model_id, model_name_en, model_name_he = model
+    
+    # Get km
+    print("\n" + "="*60)
+    print("MILEAGE (KM)")
+    print("="*60)
+    while True:
+        try:
+            km_input = input("Enter the mileage in km (e.g., 100000): ").strip()
+            km = int(km_input)
+            if km < 0:
+                print("Please enter a positive number.")
+                continue
+            break
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return None
+    
+    # Calculate km range (+/- 50,000)
+    km_min = max(0, km - 50000)
+    km_max = km + 50000
+    
+    # Get year
+    print("\n" + "="*60)
+    print("YEAR")
+    print("="*60)
+    while True:
+        try:
+            year_input = input("Enter the year (e.g., 2022): ").strip()
+            year = int(year_input)
+            if year < 1900 or year > 2030:
+                print("Please enter a valid year between 1900 and 2030.")
+                continue
+            break
+        except ValueError:
+            print("Invalid input. Please enter a year.")
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return None
+    
+    # Calculate year range (+/- 2)
+    year_min = year - 2
+    year_max = year + 2
+    
+    # Build URL
+    url = f"https://www.yad2.co.il/vehicles/cars?manufacturer={manufacturer_id}&model={model_id}&year={year_min}-{year_max}&km={km_min}-{km_max}&priceOnly=1"
+    
+    # Create search config
+    search_name = f"{manufacturer_name_en.lower().replace(' ', '-')}_{model_name_en.lower().replace(' ', '-')}"
+    search_config = {
+        'name': search_name,
+        'url': url,
+        'filters': {
+            'title_must_contain': [manufacturer_name_he]
+        }
+    }
+    
+    # Display summary
+    print("\n" + "#"*60)
+    print("SEARCH SUMMARY")
+    print("#"*60)
+    print(f"Manufacturer: {manufacturer_name_en} ({manufacturer_name_he})")
+    print(f"Model: {model_name_en} ({model_name_he})")
+    print(f"Mileage: {km:,} km (range: {km_min:,} - {km_max:,})")
+    print(f"Year: {year} (range: {year_min} - {year_max})")
+    print(f"\nGenerated URL:")
+    print(url)
+    print("#"*60 + "\n")
+    
     return search_config
 
 def load_previous_results(output_file):
@@ -413,7 +672,7 @@ async def find_ad_links_async(page):
 async def run_search_async(search_config, headful, browser_choice, max_pages):
     print(f"\nStarting search: {search_config['name']}")
     url = search_config['url']
-    output_file = f"{search_config['name']}.json"
+    output_file = f"cars/{search_config['name']}.json"
     previous_results = load_previous_results(output_file)
     is_first_run = len(previous_results) == 0
     current_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -561,9 +820,17 @@ async def main():
             
             while True:
                 try:
-                    choice = input('\nEnter the number of the search you want (or "all" for all searches): ').strip()
+                    choice = input('\nEnter the number of the search you want (or enter for interactive search): ').strip()
                     
-                    if choice.lower() == 'all':
+                    # Empty input triggers interactive mode
+                    if choice == '':
+                        search_config = interactive_search_mode(mapping_data)
+                        if not search_config:
+                            print("Interactive mode cancelled.")
+                            return
+                        selected_searches = [search_config]
+                        break
+                    elif choice.lower() == 'all':
                         selected_searches = searches
                         break
                     else:

@@ -657,7 +657,7 @@ def _run_search_once(search_config, headful, browser_choice, max_pages, retry_co
     url = search_config['url']
     filters = search_config.get('filters', {})
     search_name = search_config['name']
-    output_file = f"{search_name}.json"
+    output_file = f"cars/{search_name}.json"
     
     # Load previous results
     previous_results = load_previous_results(output_file)

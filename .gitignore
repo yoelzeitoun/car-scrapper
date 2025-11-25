@@ -38,7 +38,7 @@ env/
 Thumbs.db
 
 # Scraped data
-*.json
+cars/
 !config.json
 !facebook_config.json
 !requirements.txt

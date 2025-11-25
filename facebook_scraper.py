@@ -513,7 +513,7 @@ def main():
     searches_to_run = [args.search] if args.search else [s['name'] for s in config['searches']]
     
     for search_name in searches_to_run:
-        output_file = f'facebook-{search_name}.json'
+        output_file = f'cars/facebook-{search_name}.json'
         scrape_search(
             config,
             search_name,
