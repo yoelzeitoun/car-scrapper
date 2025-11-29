@@ -126,6 +126,30 @@ python scraper.py --config config.json
 
 ## 🛠️ Scraper Usage
 
+### Smart Interactive Search (NEW! ✨)
+
+The scraper now features an intelligent interactive mode that can parse flexible input:
+
+```bash
+# Run interactive search without config
+python scraper.py
+
+# You can enter search terms in ANY order:
+# ✓ "Toyota RAV4 2020 80000"
+# ✓ "2020 80000 Toyota RAV4"
+# ✓ "RAV4 Toyota 80000 2020"
+# ✓ "Hyundai Kona 2022" (will ask for mileage)
+# ✓ "50000 Honda Civic 2019"
+# ✓ "Peugeot 3008" (will ask for year and km)
+```
+
+**How it works:**
+- 🧠 Automatically detects manufacturer, model, year, and mileage from your input
+- 🔄 Accepts information in any order
+- ❓ Asks only for missing information
+- ✅ Supports numeric model names (e.g., Peugeot 3008)
+- 🌐 Works with the Yad2 mapping database
+
 ### Using Config File
 
 ```bash
@@ -328,9 +352,10 @@ source .venv/bin/activate
 2. **Use partial names**: "טויוטה ראב" is enough, no need for full model name
 3. **Test URLs**: Always test generated URLs in browser first
 4. **Both languages work**: Hebrew and English are equally supported
-5. **Interactive mode**: Use for multiple searches without restarting
+5. **Smart interactive search**: Enter search terms in any order (e.g., "Toyota 2020 RAV4 80000")
 6. **Save configs**: Keep successful search configs in `config.json`
 7. **Check output**: Always verify scraped data makes sense
+8. **Flexible input**: You don't need all information upfront - the system will ask for what's missing
 
 ## 🎓 Learning Resources
 

@@ -43,6 +43,41 @@ def load_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def save_search_to_history(config_path, search_info):
+    """Save a search to the history at position 1 (prepend to list).
+    
+    Args:
+        config_path: Path to config.json
+        search_info: Dict with keys 'manufacturer', 'model', 'year', 'km'
+    """
+    try:
+        config = load_config(config_path)
+        
+        # Get existing history or create new
+        last_searches = config.get('last_searches', [])
+        
+        # Create search string (e.g., "toyota rav4 2020 80000")
+        search_str = f"{search_info['manufacturer']} {search_info['model']} {search_info['year']} {search_info['km']}"
+        
+        # Remove if already exists (to avoid duplicates)
+        last_searches = [s for s in last_searches if s != search_str]
+        
+        # Prepend to list (add at position 0)
+        last_searches.insert(0, search_str)
+        
+        # Keep only last 10 searches
+        last_searches = last_searches[:10]
+        
+        # Update config
+        config['last_searches'] = last_searches
+        
+        # Save back to file
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+            
+    except Exception as e:
+        print(f"Warning: Could not save search to history: {e}")
+
 def load_yad2_mapping():
     """Load the Yad2 manufacturer/model mapping data."""
     try:
@@ -123,8 +158,18 @@ def find_closest_matches(query, options_dict, top_n=5):
         name_en = info.get('name_en', '').lower()
         name_he = info.get('name_he', '')
         
-        # Calculate similarity with English name
+        # Calculate similarity with English name using multiple methods
+        # Method 1: Overall similarity
         similarity = SequenceMatcher(None, query_lower, name_en).ratio()
+        
+        # Method 2: Check if query is substring or vice versa (boost score)
+        if query_lower in name_en or name_en in query_lower:
+            similarity = max(similarity, 0.7)
+        
+        # Method 3: Check if query starts with name or vice versa (boost score)
+        if query_lower.startswith(name_en[:min(3, len(name_en))]) or name_en.startswith(query_lower[:min(3, len(query_lower))]):
+            similarity = max(similarity, 0.6)
+        
         matches.append((id_key, info.get('name_en', ''), name_he, similarity))
     
     # Sort by similarity score (descending)
@@ -268,6 +313,160 @@ def select_model_interactive(manufacturer_id, manufacturer_name, mapping_data):
             print("\nCancelled.")
             return None
 
+def parse_search_input(user_input, mapping_data):
+    """Parse flexible search input to extract manufacturer, model, year, and km.
+    
+    Args:
+        user_input: String containing any combination of manufacturer, model, year, km
+        mapping_data: Yad2 mapping data
+    
+    Returns:
+        Dict with keys: 'manufacturer', 'model', 'year', 'km' (values can be None)
+    """
+    if not mapping_data:
+        return {'manufacturer': None, 'model': None, 'year': None, 'km': None}
+    
+    result = {
+        'manufacturer': None,
+        'model': None,
+        'year': None,
+        'km': None
+    }
+    
+    # Split input into tokens
+    tokens = user_input.strip().split()
+    if not tokens:
+        return result
+    
+    manufacturers = mapping_data.get('manufacturers', {})
+    
+    # Extract numbers (for year and km) but keep original tokens for model matching
+    numbers = []
+    numeric_tokens = []  # Track which tokens are numeric
+    non_numeric_tokens = []
+    
+    for i, token in enumerate(tokens):
+        # Remove commas from numbers (e.g., "100,000" -> "100000")
+        clean_token = token.replace(',', '')
+        try:
+            num = int(clean_token)
+            numbers.append((num, i))  # Store number with its position
+            numeric_tokens.append(i)
+        except ValueError:
+            non_numeric_tokens.append(token)
+    
+    # Improved year/km detection
+    year_candidates = [(num, idx) for num, idx in numbers if 1950 <= num <= 2050]
+    current_year = 2025
+    year_token_idx = None
+    if len(year_candidates) == 1:
+        result['year'] = year_candidates[0][0]
+        year_token_idx = year_candidates[0][1]
+    elif len(year_candidates) > 1:
+        # Pick the one closest to current year as year
+        closest = min(year_candidates, key=lambda x: abs(x[0] - current_year))
+        result['year'] = closest[0]
+        year_token_idx = closest[1]
+        # The other is km if positive
+        for num, idx in year_candidates:
+            if idx != year_token_idx and num > 0 and result['km'] is None:
+                result['km'] = num
+    # Now pick km from other numbers (any positive, excluding year)
+    for num, idx in numbers:
+        if idx != year_token_idx and num > 0 and result['km'] is None:
+            result['km'] = num
+    
+    # Try to match manufacturer and model from all tokens (including numeric ones that might be model names)
+    if tokens:
+        best_manufacturer_match = None
+        best_manufacturer_score = 0
+        best_manufacturer_token_count = 0
+        
+        # Try single tokens and combinations for manufacturer
+        for i in range(len(tokens)):
+            for j in range(i + 1, len(tokens) + 1):
+                candidate = ' '.join(tokens[i:j]).lower()
+                # Skip pure numbers that are likely year/km
+                if candidate.replace(',', '').replace(' ', '').isdigit():
+                    num = int(candidate.replace(',', '').replace(' ', ''))
+                    if num >= 1900:  # Skip likely year or km values
+                        continue
+                
+                for mfr_id, mfr_info in manufacturers.items():
+                    mfr_name = mfr_info.get('name_en', '').lower()
+                    if not mfr_name:
+                        continue
+                    
+                    # Use SequenceMatcher for similarity
+                    score = SequenceMatcher(None, candidate, mfr_name).ratio()
+                    
+                    # Boost score for substring matches
+                    if candidate in mfr_name or mfr_name in candidate:
+                        score = max(score, 0.7)
+                    
+                    # Boost score for prefix matches
+                    min_len = min(3, len(candidate), len(mfr_name))
+                    if candidate[:min_len] == mfr_name[:min_len]:
+                        score = max(score, 0.65)
+                    
+                    token_count = j - i
+                    
+                    if score > best_manufacturer_score or (score == best_manufacturer_score and token_count > best_manufacturer_token_count):
+                        best_manufacturer_score = score
+                        best_manufacturer_match = (mfr_id, mfr_info, i, j)
+                        best_manufacturer_token_count = token_count
+        
+        if best_manufacturer_match and best_manufacturer_score > 0.55:  # Lower threshold for better detection
+            mfr_id, mfr_info, start_idx, end_idx = best_manufacturer_match
+            result['manufacturer'] = (mfr_id, mfr_info.get('name_en'), mfr_info.get('name_he'))
+            
+            # Remove matched manufacturer tokens and try to find model
+            remaining_tokens = tokens[:start_idx] + tokens[end_idx:]
+            
+            if remaining_tokens:
+                models = mfr_info.get('models', {})
+                best_model_match = None
+                best_model_score = 0
+                
+                # Try combinations for model (including numeric models like "3008")
+                for i in range(len(remaining_tokens)):
+                    for j in range(i + 1, len(remaining_tokens) + 1):
+                        candidate = ' '.join(remaining_tokens[i:j]).lower()
+                        
+                        # Skip if this looks like year (1900-2030)
+                        if candidate.replace(',', '').replace(' ', '').isdigit():
+                            num = int(candidate.replace(',', '').replace(' ', ''))
+                            if 1900 <= num <= 2030:
+                                continue
+                            # For other numbers, allow them as potential model names (e.g., "3008", "500")
+                        
+                        for model_id, model_info in models.items():
+                            model_name = model_info.get('name_en', '').lower()
+                            if not model_name:
+                                continue
+                            
+                            # Use SequenceMatcher for similarity
+                            score = SequenceMatcher(None, candidate, model_name).ratio()
+                            
+                            # Boost score for substring matches
+                            if candidate in model_name or model_name in candidate:
+                                score = max(score, 0.7)
+                            
+                            # Boost score for prefix matches
+                            min_len = min(3, len(candidate), len(model_name))
+                            if candidate[:min_len] == model_name[:min_len]:
+                                score = max(score, 0.65)
+                            
+                            if score > best_model_score:
+                                best_model_score = score
+                                best_model_match = (model_id, model_info)
+                
+                if best_model_match and best_model_score > 0.55:  # Lower threshold for better detection
+                    model_id, model_info = best_model_match
+                    result['model'] = (model_id, model_info.get('name_en'), model_info.get('name_he'))
+    
+    return result
+
 def interactive_search_mode(mapping_data):
     """Interactive mode to build a search config from user inputs.
     
@@ -279,58 +478,164 @@ def interactive_search_mode(mapping_data):
     print("#" + "  INTERACTIVE CAR SEARCH MODE".center(58) + "#")
     print("#" + " "*58 + "#")
     print("#"*60)
-    
-    # Select manufacturer
-    manufacturer = select_manufacturer_interactive(mapping_data)
-    if not manufacturer:
-        return None
-    manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
-    
-    # Select model
-    model = select_model_interactive(manufacturer_id, manufacturer_name_en, mapping_data)
-    if not model:
-        return None
-    model_id, model_name_en, model_name_he = model
-    
-    # Get km
+    print("\n🔍 SMART SEARCH - Enter any combination in any order:")
+    print("   Examples:")
+    print("   • 'Toyota RAV4 2020 80000'")
+    print("   • '2022 Hyundai Kona' (we'll ask for mileage)")
+    print("   • '50000 2019 Honda Civic' (numbers in any order)")
+    print("   • 'Peugeot 3008' (we'll ask for year and km)")
     print("\n" + "="*60)
-    print("MILEAGE (KM)")
-    print("="*60)
-    while True:
-        try:
-            km_input = input("Enter the mileage in km (e.g., 100000): ").strip()
-            km = int(km_input)
-            if km < 0:
-                print("Please enter a positive number.")
-                continue
-            break
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-        except KeyboardInterrupt:
-            print("\nCancelled.")
+    
+    try:
+        search_input = input("Search: ").strip()
+        if not search_input:
+            print("No input provided.")
             return None
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return None
+    
+    # Parse the input
+    parsed = parse_search_input(search_input, mapping_data)
+    
+    # Show what was detected
+    print("\n" + "="*60)
+    print("DETECTED FROM INPUT")
+    print("="*60)
+    detected_any = False
+    
+    # Fuzzy match confirmation logic
+    fuzzy_confirm = False
+    fuzzy_manufacturer = None
+    fuzzy_model = None
+    # Check manufacturer fuzzy match
+    if parsed['manufacturer']:
+        manu_name = parsed['manufacturer'][1]
+        # If input doesn't match exactly, ask for confirmation
+        if manu_name.lower() not in search_input.lower():
+            fuzzy_confirm = True
+            fuzzy_manufacturer = manu_name
+        print(f"✓ Manufacturer: {manu_name}")
+        detected_any = True
+    if parsed['model']:
+        model_name = parsed['model'][1]
+        if model_name.lower() not in search_input.lower():
+            fuzzy_confirm = True
+            fuzzy_model = model_name
+        print(f"✓ Model: {model_name}")
+        detected_any = True
+    if parsed['year']:
+        print(f"✓ Year: {parsed['year']}")
+        detected_any = True
+    if parsed['km']:
+        print(f"✓ Mileage: {parsed['km']:,} km")
+        detected_any = True
+    
+    if not detected_any:
+        print("(No information detected from input)")
+    
+    # If fuzzy match, ask for confirmation
+    if fuzzy_confirm:
+        print("\n" + "="*60)
+        print("CONFIRM DETECTED VALUES")
+        print("="*60)
+        confirm_str = "Did you mean: "
+        if fuzzy_manufacturer:
+            confirm_str += f"{fuzzy_manufacturer} "
+        if fuzzy_model:
+            confirm_str += f"{fuzzy_model} "
+        confirm_str = confirm_str.strip()
+        confirm = input(f"{confirm_str}? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Let's try again. Please enter the correct manufacturer and model.")
+            manufacturer = select_manufacturer_interactive(mapping_data)
+            if not manufacturer:
+                return None
+            manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+            model = select_model_interactive(manufacturer_id, manufacturer_name_en, mapping_data)
+            if not model:
+                return None
+            model_id, model_name_en, model_name_he = model
+        else:
+            manufacturer = parsed['manufacturer']
+            model = parsed['model']
+    else:
+        manufacturer = parsed['manufacturer']
+        model = parsed['model']
+    year = parsed['year']
+    km = parsed['km']
+    
+    # If manufacturer not found, ask for it
+    if not manufacturer:
+        manufacturer = select_manufacturer_interactive(mapping_data)
+        if not manufacturer:
+            return None
+    else:
+        manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+    
+    if not parsed['manufacturer']:  # Only show if we just asked for it
+        manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+        print(f"✓ Manufacturer: {manufacturer_name_en} ({manufacturer_name_he})")
+    else:
+        manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+    
+    # If model not found, ask for it
+    if not model:
+        model = select_model_interactive(manufacturer_id, manufacturer_name_en, mapping_data)
+        if not model:
+            return None
+    else:
+        model_id, model_name_en, model_name_he = model
+    
+    if not parsed['model']:  # Only show if we just asked for it
+        model_id, model_name_en, model_name_he = model
+        print(f"✓ Model: {model_name_en} ({model_name_he})")
+    else:
+        model_id, model_name_en, model_name_he = model
+    
+    # If km not found, ask for it
+    if km is None:
+        print("\n" + "="*60)
+        print("ENTER MILEAGE")
+        print("="*60)
+        while True:
+            try:
+                km_input = input("Enter the mileage in km (e.g., 100000): ").strip()
+                km = int(km_input.replace(',', ''))
+                if km < 0:
+                    print("Please enter a positive number.")
+                    continue
+                break
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+            except KeyboardInterrupt:
+                print("\nCancelled.")
+                return None
+        print(f"✓ Mileage: {km:,} km")
     
     # Calculate km range (+/- 50,000)
     km_min = max(0, km - 50000)
     km_max = km + 50000
     
-    # Get year
-    print("\n" + "="*60)
-    print("YEAR")
-    print("="*60)
-    while True:
-        try:
-            year_input = input("Enter the year (e.g., 2022): ").strip()
-            year = int(year_input)
-            if year < 1900 or year > 2030:
-                print("Please enter a valid year between 1900 and 2030.")
-                continue
-            break
-        except ValueError:
-            print("Invalid input. Please enter a year.")
-        except KeyboardInterrupt:
-            print("\nCancelled.")
-            return None
+    # If year not found, ask for it
+    if year is None:
+        print("\n" + "="*60)
+        print("ENTER YEAR")
+        print("="*60)
+        while True:
+            try:
+                year_input = input("Enter the year (e.g., 2022): ").strip()
+                year = int(year_input)
+                if year < 1900 or year > 2030:
+                    print("Please enter a valid year between 1900 and 2030.")
+                    continue
+                break
+            except ValueError:
+                print("Invalid input. Please enter a year.")
+            except KeyboardInterrupt:
+                print("\nCancelled.")
+                return None
+        print(f"✓ Year: {year}")
     
     # Calculate year range (+/- 2)
     year_min = year - 2
@@ -346,6 +651,12 @@ def interactive_search_mode(mapping_data):
         'url': url,
         'filters': {
             'title_must_contain': [manufacturer_name_he]
+        },
+        'search_metadata': {
+            'manufacturer': manufacturer_name_en.lower(),
+            'model': model_name_en.lower(),
+            'year': year,
+            'km': km
         }
     }
     
@@ -669,31 +980,36 @@ async def find_ad_links_async(page):
             
     return unique_results
 
-async def run_search_async(search_config, headful, browser_choice, max_pages):
+async def run_search_async(search_config, headful, browser_choice, max_pages, concurrent_windows=5):
     print(f"\nStarting search: {search_config['name']}")
     url = search_config['url']
     output_file = f"cars/{search_config['name']}.json"
     previous_results = load_previous_results(output_file)
     is_first_run = len(previous_results) == 0
     current_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    
     async with async_playwright() as p:
         browser_type = getattr(p, browser_choice)
-        browser = await browser_type.launch(
-            headless=not headful,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox'] if browser_choice == 'chromium' else []
-        )
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            locale='he-IL',
-            timezone_id='Asia/Jerusalem'
-        )
-        
-        # Main feed page
+
+        async def launch_browser_and_context():
+            browser = await browser_type.launch(
+                headless=not headful,
+                args=['--disable-blink-features=AutomationControlled', '--no-sandbox'] if browser_choice == 'chromium' else []
+            )
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='he-IL',
+                timezone_id='Asia/Jerusalem'
+            )
+            return browser, context
+
+        # Launch initial browser/context
+        browser, context = await launch_browser_and_context()
+
+        # Main feed page - used only for pagination discovery
         page = await context.new_page()
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+
         print(f"Navigating to {url}...")
         try:
             await page.goto(url, wait_until='domcontentloaded', timeout=90000)
@@ -701,9 +1017,14 @@ async def run_search_async(search_config, headful, browser_choice, max_pages):
             print(f"Error navigating to feed page: {e}")
             await browser.close()
             return
-        
-        # Check CAPTCHA
-        if 'captcha' in await page.title() or 'validate' in page.url:
+
+        # Check CAPTCHA on feed page
+        page_title = ''
+        try:
+            page_title = await page.title()
+        except:
+            pass
+        if 'captcha' in page_title.lower() or 'validate' in page.url:
             print("⚠️  CAPTCHA detected on feed page! Please solve it.")
             if headful:
                 await asyncio.sleep(30)
@@ -714,69 +1035,125 @@ async def run_search_async(search_config, headful, browser_choice, max_pages):
 
         # Pagination
         pages_to_scrape = max_pages or 1
-        # (Simplified pagination logic for v2 - can be enhanced)
-        
         all_items_to_process = []
         scraped_ids = set()
-        
+
         for page_num in range(1, pages_to_scrape + 1):
             if page_num > 1:
                 page_url = f"{url}&page={page_num}" if '?' in url else f"{url}?page={page_num}"
                 print(f"Navigating to page {page_num}...")
-                await page.goto(page_url, wait_until='domcontentloaded')
-                await asyncio.sleep(2)
-            
+                try:
+                    await page.goto(page_url, wait_until='domcontentloaded')
+                    await asyncio.sleep(2)
+                except Exception:
+                    print(f"Failed to load pagination page {page_num}, stopping pagination.")
+                    break
+
             items = await find_ad_links_async(page)
             print(f"Found {len(items)} items on page {page_num}")
-            
+
             if not items:
                 print("No more items found, stopping pagination.")
                 break
-            
+
             for item in items:
                 item_id = extract_item_id(item['url'])
                 if item_id and item_id not in scraped_ids:
                     scraped_ids.add(item_id)
                     all_items_to_process.append(item)
-        
+
+        await page.close()
+
         print(f"\nTotal unique items to process: {len(all_items_to_process)}")
-        
-        # Process items in parallel
-        semaphore = asyncio.Semaphore(5) # Limit to 5 concurrent tabs
-        tasks = [asyncio.create_task(process_item(context, item, semaphore, previous_results, current_timestamp, is_first_run)) for i, item in enumerate(all_items_to_process, 1)]
-        
+
+        # Controlled concurrency processing so we can restart on CAPTCHA and resume
+        concurrency = concurrent_windows
+        semaphore = asyncio.Semaphore(concurrency)
         results = []
-        # Use as_completed to show progress
+
+        idx = 0
+        running = {}
+
+        async def start_task_for_index(i):
+            item = all_items_to_process[i]
+            task = asyncio.create_task(process_item(context, item, semaphore, previous_results, current_timestamp, is_first_run))
+            running[task] = i
+            return task
+
         try:
-            for f in asyncio.as_completed(tasks):
-                res = await f
-                if 'success' in res:
-                    results.append(res['car'])
-                elif 'error' in res:
-                    if res['error'] == 'CAPTCHA':
-                        print("Stopping due to CAPTCHA.")
-                        # Cancel all other tasks
-                        for t in tasks:
-                            if not t.done():
-                                t.cancel()
-                        break
+            # Prime initial tasks
+            while idx < len(all_items_to_process) and len(running) < concurrency:
+                await start_task_for_index(idx)
+                idx += 1
+
+            while running:
+                done, _ = await asyncio.wait(list(running.keys()), return_when=asyncio.FIRST_COMPLETED)
+                for t in done:
+                    i = running.pop(t)
+                    try:
+                        res = t.result()
+                    except asyncio.CancelledError:
+                        res = {'error': 'cancelled', 'item': all_items_to_process[i]}
+                    except Exception as e:
+                        res = {'error': str(e), 'item': all_items_to_process[i]}
+
+                    if 'success' in res:
+                        results.append(res['car'])
+                    elif 'error' in res:
+                        if res['error'] == 'CAPTCHA':
+                            print("⚠️  CAPTCHA detected during item processing. Restarting browser and resuming...")
+                            # Cancel all running tasks
+                            for rt in list(running.keys()):
+                                rt.cancel()
+                            # Wait for cancellations
+                            await asyncio.gather(*running.keys(), return_exceptions=True)
+                            running.clear()
+
+                            # Close current browser and context
+                            try:
+                                await browser.close()
+                            except Exception:
+                                pass
+
+                            # Re-launch browser/context
+                            browser, context = await launch_browser_and_context()
+
+                            # Reset idx to retry the failed item
+                            idx = i
+
+                            # Start fresh tasks up to concurrency
+                            while idx < len(all_items_to_process) and len(running) < concurrency:
+                                await start_task_for_index(idx)
+                                idx += 1
+                            # Continue outer loop
+                            continue
+                        else:
+                            print(f"Error for {res.get('item', {}).get('url')}: {res.get('error')}")
+
+                    # Fill up running tasks
+                    while idx < len(all_items_to_process) and len(running) < concurrency:
+                        await start_task_for_index(idx)
+                        idx += 1
+
         except Exception as e:
             print(f"Error during processing: {e}")
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
+            for t in running.keys():
+                t.cancel()
+            await asyncio.gather(*running.keys(), return_exceptions=True)
+
+        # Wait for any remaining running tasks to finish
+        if running:
+            await asyncio.gather(*running.keys(), return_exceptions=True)
         
-        # Wait for all tasks to finish/cancel
-        await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Handle removed items
+        # Handle removed items (collect silently to avoid repetitive lines)
         found_ids = {c['item_id'] for c in results}
+        removed_list = []
         for old_id, old_car in previous_results.items():
             if old_id not in found_ids and old_car.get('status') != 'removed':
                 old_car['status'] = 'removed'
                 old_car['removed_date'] = current_timestamp
                 results.append(old_car)
-                print(f"  ✗ Removed: {old_car.get('title')}")
+                removed_list.append(old_car)
 
         # Save results
         output_data = {
@@ -787,8 +1164,29 @@ async def run_search_async(search_config, headful, browser_choice, max_pages):
         }
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(output_data, f, ensure_ascii=False, indent=2)
-            
+
+        # Summary report
+        previous_total = len(previous_results)
+        new_count = sum(1 for c in results if c.get('status') == 'new')
+        removed_count = len(removed_list)
+        active_total = len([c for c in results if c.get('status') != 'removed'])
+
         print(f"\nSaved {len(results)} results to {output_file}")
+        print("\nSummary:")
+        print(f"  - Before scraping: {previous_total}")
+        print(f"  - New added: {new_count}")
+        print(f"  - Removed: {removed_count}")
+        print(f"  - New total (active + updated + new): {active_total}")
+
+        # Print links to new cars
+        if new_count > 0:
+            print("\nNew car links:")
+            for car in results:
+                if car.get('status') == 'new':
+                    url_link = car.get('url') or car.get('link') or car.get('item_url')
+                    if url_link:
+                        print(f"  - {url_link}")
+
         await browser.close()
 
 async def main():
@@ -800,23 +1198,18 @@ async def main():
     
     config = load_config(args.config)
     mapping_data = load_yad2_mapping()
-    searches = [enrich_search_config(s, mapping_data) for s in config['searches']]
-    # Debug print
-    # print(f"Loaded {len(searches)} searches: {[s.get('name') for s in searches]}")
+    last_searches = config.get('last_searches', [])
     
     # If no specific search provided, show interactive menu
     if not args.search:
-        if len(searches) == 1:
-            # Only one search, run it automatically
-            selected_searches = searches
-        else:
-            # Multiple searches, show menu
-            print(f'\n{"="*60}')
-            print(f'Available Searches:')
-            print(f'{"="*60}')
-            for i, search in enumerate(searches, 1):
-                print(f'{i}. {search["name"]}')
-            print(f'{"="*60}')
+        if last_searches:
+            # Display last searches menu
+            print('\n' + '='*60)
+            print('Last Searches:')
+            print('='*60)
+            for i, search in enumerate(last_searches, 1):
+                print(f'{i}. {search}')
+            print('='*60)
             
             while True:
                 try:
@@ -830,33 +1223,100 @@ async def main():
                             return
                         selected_searches = [search_config]
                         break
-                    elif choice.lower() == 'all':
-                        selected_searches = searches
-                        break
                     else:
                         choice_num = int(choice)
-                        if 1 <= choice_num <= len(searches):
-                            selected_searches = [searches[choice_num - 1]]
-                            break
+                        if 1 <= choice_num <= len(last_searches):
+                            # Parse the selected search string
+                            search_parts = last_searches[choice_num - 1].split()
+                            if len(search_parts) >= 4:
+                                # Reconstruct search from history
+                                manufacturer_name = search_parts[0]
+                                model_name = ' '.join(search_parts[1:-2])  # Everything between manufacturer and last 2 numbers
+                                year = int(search_parts[-2])
+                                km = int(search_parts[-1])
+                                
+                                # Find manufacturer and model IDs
+                                manufacturer = None
+                                model = None
+                                
+                                if mapping_data:
+                                    manufacturers = mapping_data.get('manufacturers', {})
+                                    for mfr_id, mfr_info in manufacturers.items():
+                                        if mfr_info.get('name_en', '').lower() == manufacturer_name.lower():
+                                            manufacturer = (mfr_id, mfr_info.get('name_en'), mfr_info.get('name_he'))
+                                            models = mfr_info.get('models', {})
+                                            for model_id, model_info in models.items():
+                                                if model_info.get('name_en', '').lower() == model_name.lower():
+                                                    model = (model_id, model_info.get('name_en'), model_info.get('name_he'))
+                                                    break
+                                            break
+                                
+                                if manufacturer and model:
+                                    # Build search config from history
+                                    manufacturer_id, manufacturer_name_en, manufacturer_name_he = manufacturer
+                                    model_id, model_name_en, model_name_he = model
+                                    
+                                    km_min = max(0, km - 50000)
+                                    km_max = km + 50000
+                                    year_min = year - 2
+                                    year_max = year + 2
+                                    
+                                    url = f"https://www.yad2.co.il/vehicles/cars?manufacturer={manufacturer_id}&model={model_id}&year={year_min}-{year_max}&km={km_min}-{km_max}&priceOnly=1"
+                                    
+                                    search_config = {
+                                        'name': f"{manufacturer_name_en.lower().replace(' ', '-')}_{model_name_en.lower().replace(' ', '-')}",
+                                        'url': url,
+                                        'filters': {
+                                            'title_must_contain': [manufacturer_name_he]
+                                        },
+                                        'search_metadata': {
+                                            'manufacturer': manufacturer_name_en.lower(),
+                                            'model': model_name_en.lower(),
+                                            'year': year,
+                                            'km': km
+                                        }
+                                    }
+                                    selected_searches = [search_config]
+                                    break
+                                else:
+                                    print(f"Could not find manufacturer/model in mapping for '{last_searches[choice_num - 1]}'")
+                                    continue
+                            else:
+                                print("Invalid search format in history.")
+                                continue
                         else:
-                            print(f'Please enter a number between 1 and {len(searches)}, or "all"')
+                            print(f'Please enter a number between 1 and {len(last_searches)}')
                 except ValueError:
-                    print('Invalid input. Please enter a number or "all"')
+                    print('Invalid input. Please enter a number')
                 except KeyboardInterrupt:
                     print('\n\nCancelled.')
                     return
+        else:
+            # No history, go directly to interactive mode
+            print('\nNo search history found. Starting interactive mode...')
+            search_config = interactive_search_mode(mapping_data)
+            if not search_config:
+                print("Interactive mode cancelled.")
+                return
+            selected_searches = [search_config]
     else:
-        selected_searches = [s for s in searches if s['name'] == args.search]
-        if not selected_searches:
-            print(f"Search '{args.search}' not found.")
-            return
+        # args.search provided - not implemented for new history system
+        print(f"Error: --search parameter is not supported with the new history system.")
+        print("Please use the interactive menu instead.")
+        return
 
     settings = config.get('scraper_settings', {})
     browser_choice = settings.get('browser', 'chromium')
     max_pages = settings.get('max_pages', 3)
+    concurrent_windows = settings.get('concurrent_windows', 5)
 
     for search in selected_searches:
-        await run_search_async(search, args.headful, browser_choice, max_pages)
+        await run_search_async(search, args.headful, browser_choice, max_pages, concurrent_windows)
+        
+        # Save search to history after successful run
+        if 'search_metadata' in search:
+            metadata = search['search_metadata']
+            save_search_to_history(args.config, metadata)
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -1,28 +1,18 @@
 {
-  "searches": [
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=19&model=10238&year=2020-2025&price=20000--1&km=20000-140000&priceOnly=1"
-    },
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=141&model=13329&km=-1-50000&priceOnly=1"
-    },
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=40&model=10547&year=2022-2025&km=10000-90000&priceOnly=1"
-    },
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=21&model=10283&year=2023-2025&price=20000--1&km=-1-15000&priceOnly=1"
-    },
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?carTag=5&manufacturer=355&model=13395&year=2024-2025&price=20000--1&km=-1-130000&priceOnly=1"
-    },
-    {
-      "url": "https://www.yad2.co.il/vehicles/cars?manufacturer=2&model=10038&year=2020-2024&km=10000-100000&priceOnly=1"
-    }
+  "last_searches": [
+    "toyota rav4 2021 36500",
+    "peugeot 107 2015 17",
+    "mercedes-benz eqa 2015 3560",
+    "skoda scala 2025 40000",
+    "toyota rav4 2020 80000",
+    "byd seal-u 2021 40000",
+    "skoda octavia 2014 150000"
   ],
   "scraper_settings": {
     "headless": true,
     "browser": "chromium",
-    "max_pages": 10,
-    "delay_between_requests": 1.5
+    "max_pages": 50,
+    "delay_between_requests": 1.5,
+    "concurrent_windows": 10
   }
 }
