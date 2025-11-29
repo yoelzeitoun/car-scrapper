@@ -807,15 +807,6 @@ async def extract_car_details_async(page, url):
                 specs[label] = value
                 if not mileage and 'קילומטר' in label:
                     mileage = value
-
-        # Images (limit to 10)
-        imgs = []
-        for img in await page.query_selector_all('img'):
-            src = await img.get_attribute('src') or await img.get_attribute('data-src')
-            if src and ('img.yad2.co.il' in src or 'yad2' in src):
-                full_src = urljoin(page.url, src)
-                if full_src not in imgs:
-                    imgs.append(full_src)
         
         return {
             'url': url,
@@ -829,7 +820,6 @@ async def extract_car_details_async(page, url):
             'location': location,
             'description': description,
             'specs': specs,
-            'images': imgs[:10],
         }
     except Exception as e:
         print(f"Error extracting details for {url}: {e}")
