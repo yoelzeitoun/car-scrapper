@@ -878,21 +878,36 @@ async def process_item(context, item, semaphore, previous_results, current_times
                     car['last_update'] = current_timestamp
                     car['first_seen'] = old_car.get('first_seen', current_timestamp)
                     car['update_count'] = old_car.get('update_count', 0) + 1
-                    print(f"  ↻ Updated: {car.get('title')} - {car.get('price_str')}")
+                    year = car.get('year', 'N/A')
+                    mileage = car.get('mileage', 'N/A')
+                    price = car.get('price_str', 'N/A')
+                    location = car.get('location', 'N/A')
+                    marketing_name = car.get('marketing_name') or car.get('title', 'N/A')
+                    print(f"  ↻ Updated: {marketing_name} | {year} | {mileage} km | {price} | {location}")
                 else:
                     car['status'] = 'active'
                     car['last_update'] = old_car.get('last_update', current_timestamp)
                     car['first_seen'] = old_car.get('first_seen', current_timestamp)
                     car['update_count'] = old_car.get('update_count', 0)
-                    print(f"  ✓ Active: {car.get('title')} - {car.get('price_str')}")
+                    year = car.get('year', 'N/A')
+                    mileage = car.get('mileage', 'N/A')
+                    price = car.get('price_str', 'N/A')
+                    location = car.get('location', 'N/A')
+                    marketing_name = car.get('marketing_name') or car.get('title', 'N/A')
+                    print(f"  ✓ Active: {marketing_name} | {year} | {mileage} km | {price} | {location}")
                 car['content_hash'] = new_hash
             else:
+                year = car.get('year', 'N/A')
+                mileage = car.get('mileage', 'N/A')
+                price = car.get('price_str', 'N/A')
+                location = car.get('location', 'N/A')
+                marketing_name = car.get('marketing_name') or car.get('title', 'N/A')
                 if is_first_run:
                     car['status'] = 'active'
-                    print(f"  ✓ Active (First Run): {car.get('title')} - {car.get('price_str')}")
+                    print(f"  ✓ Active (First Run): {marketing_name} | {year} | {mileage} km | {price} | {location}")
                 else:
                     car['status'] = 'new'
-                    print(f"  ★ New: {car.get('title')} - {car.get('price_str')}")
+                    print(f"  ★ New: {marketing_name} | {year} | {mileage} km | {price} | {location}")
                 car['first_seen'] = current_timestamp
                 car['last_update'] = current_timestamp
                 car['update_count'] = 0
@@ -1156,17 +1171,18 @@ async def run_search_async(search_config, headful, browser_choice, max_pages, co
             json.dump(output_data, f, ensure_ascii=False, indent=2)
 
         # Summary report
-        previous_total = len(previous_results)
+        # Count only previously active (non-removed) items to avoid inflating totals
+        previous_total_active = sum(1 for c in previous_results.values() if c.get('status') != 'removed')
         new_count = sum(1 for c in results if c.get('status') == 'new')
         removed_count = len(removed_list)
         active_total = len([c for c in results if c.get('status') != 'removed'])
 
         print(f"\nSaved {len(results)} results to {output_file}")
         print("\nSummary:")
-        print(f"  - Before scraping: {previous_total}")
+        print(f"  - Before scraping: {previous_total_active}")
         print(f"  - New added: {new_count}")
         print(f"  - Removed: {removed_count}")
-        print(f"  - New total (active + updated + new): {active_total}")
+        print(f"  - New total: {active_total}")
 
         # Print links to new cars
         if new_count > 0:
